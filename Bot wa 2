@@ -1,0 +1,87 @@
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { Boom } = require('@hapi/boom');
+const pino = require('pino');
+const fetch = require('node-fetch');
+
+async function tanyaGemini(promptText) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: promptText }] }]
+            })
+        });
+
+        const data = await response.json();
+        if (data.candidates && data.candidates.length > 0) {
+            return data.candidates[0].content.parts[0].text;
+        } else {
+            console.error("Respon Error dari Google API:", JSON.stringify(data, null, 2));
+            return "Duh, argumen gw lagi nge-lag.";
+        }
+    } catch (err) {
+        console.error("Gagal koneksi ke Gemini:", err);
+        return "Sinyal error, gw rehat bentar.";
+    }
+}
+
+async function startBot() {
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+
+    const sock = makeWASocket({
+        auth: state,
+        printQRInTerminal: true,
+        logger: pino({ level: 'silent' })
+    });
+
+    sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect } = update;
+        if (connection === 'close') {
+            const shouldReconnect = (new Boom(lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut);
+            console.log('Koneksi terputus, mencoba menghubungkan ulang...', shouldReconnect);
+            if (shouldReconnect) {
+                startBot();
+            }
+        } else if (connection === 'open') {
+            console.log('Bot WhatsApp berhasil terhubung ke server!');
+        }
+    });
+
+    sock.ev.on('creds.update', saveCreds);
+
+    sock.ev.on('messages.upsert', async (m) => {
+        try {
+            const mek = m.messages[0];
+            if (!mek.message || mek.key.fromMe) return;
+
+            const messageType = Object.keys(mek.message)[0];
+            let body = '';
+            if (messageType === 'conversation') {
+                body = mek.message.conversation;
+            } else if (messageType === 'extendedTextMessage') {
+                body = mek.message.extendedTextMessage.text;
+            }
+
+            const from = mek.key.remoteJid;
+            const isGroup = from.endsWith('@g.us');
+
+            // Bot hanya merespon jika dipanggil atau di dalam grup
+            if (isGroup && body) {
+                console.log(`Pesan masuk dari grup: ${body}`);
+                
+                // Panggil Gemini untuk merespon argumen / debat
+                const aiReply = await tanyaGemini(`Kamu adalah peserta debat yang cerdas, kritis, dan aktif. Berikan tanggapan proaktif terhadap pernyataan berikut: "${body}"`);
+                
+                await sock.sendMessage(from, { text: aiReply }, { quoted: mek });
+            }
+        } catch (error) {
+            console.error("Error saat memproses pesan:", error);
+        }
+    });
+}
+
+startBot();
