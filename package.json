@@ -1,0 +1,14 @@
+{
+  "name": "bot-debat-wa",
+  "version": "1.0.0",
+  "description": "Bot WhatsApp Debat AI",
+  "main": "bot_debat.js",
+  "scripts": {
+    "start": "node bot_debat.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.5",
+    "node-fetch": "^2.7.0",
+    "pino": "^9.0.0"
+  }
+}
